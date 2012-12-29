@@ -1,4 +1,4 @@
-import multiprocessing, os, re, time
+import multiprocessing, os, re, sys, time
 
 from PyQt4 import QtGui, QtCore
 from Queue import Queue
@@ -9,10 +9,10 @@ compression_methods = ('gz', 'bz2', 'zip')
 
 class BackupDirsMain(QtGui.QWidget):
   def __init__(self, main = None):
-    super(BackupDirsMain, self).__init__()
     self.main = main
-    self.directories = [] # Directory list.
+    self.dirs = [] # Directory list.
     self.archiver = None # The worker thread.
+    self.withGui = self.main.withGui
     # Name-value string pairs.
     self.settings = { 'targetDir':os.environ.get('HOME', ''), 'compressionMethod':'bz2', 'fileSizeLimit':'1000', 'fileSuffix':'*' }
     self.defaultTargetDir = self.settings['targetDir']
@@ -20,30 +20,34 @@ class BackupDirsMain(QtGui.QWidget):
     self.defaultFileSizeLimit = self.settings['fileSizeLimit']
     self.defaultFileSuffix = self.settings['fileSuffix']
     self.loadSettings()
-    tabs = QtGui.QTabWidget()
-    tabs.addTab(self.dirListTab(), 'Directories')
-    tabs.addTab(self.preferencesTab(), 'Preferences')
-    grid = QtGui.QGridLayout(self)
-    grid.addWidget(tabs)
-    # Updates the second row periodically.
-    self.timer = Timer(self.dirListWidget)
-    if self.dirListWidget.rowCount() == 0:
-      self.main.start.setEnabled(False)
+    if self.withGui:
+      QtGui.QWidget.__init__(self)
+      tabs = QtGui.QTabWidget()
+      tabs.addTab(self.dirListTab(), 'Directories')
+      tabs.addTab(self.preferencesTab(), 'Preferences')
+      grid = QtGui.QGridLayout(self)
+      grid.addWidget(tabs)
+      # Timer updates the second column periodically. It's for the GUI only.
+      self.timer = Timer(self.dirListWidget)
+      if self.dirListWidget.rowCount() == 0:
+        self.main.start.setEnabled(False)
    
   def dirListTab(self):
+    if not self.withGui:
+      return None
     self.dirListWidget = QtGui.QTableWidget(0, 3, self)
     self.dirListWidget.setHorizontalHeaderLabels(['Directory', 'Elapsed Time', 'Status'])
     self.dirListWidget.setSelectionMode(QtGui.QAbstractItemView.MultiSelection)
-    for i in range(len(self.directories)):
+    for i in range(len(self.dirs)):
       self.dirListWidget.insertRow(self.dirListWidget.rowCount())
-      self.dirListWidget.setItem(i, 0, QtGui.QTableWidgetItem(self.directories[i]))
+      self.dirListWidget.setItem(i, 0, QtGui.QTableWidgetItem(self.dirs[i]))
       elapsedTime = QtGui.QTableWidgetItem('0:00')
       elapsedTime.setFlags(QtCore.Qt.NoItemFlags)
       status = QtGui.QTableWidgetItem('Not started')
       status.setFlags(QtCore.Qt.NoItemFlags)
       self.dirListWidget.setItem(i, 1, elapsedTime)
       self.dirListWidget.setItem(i, 2, status)
-    #self.dirListWidget.addItems(self.directories)
+    #self.dirListWidget.addItems(self.dirs)
     self.dirListWidget.horizontalHeader().setResizeMode(0, QtGui.QHeaderView.ResizeToContents)
     self.dirListWidget.horizontalHeader().setResizeMode(1, QtGui.QHeaderView.Stretch)
     self.dirListWidget.horizontalHeader().setResizeMode(2, QtGui.QHeaderView.Stretch)
@@ -62,6 +66,8 @@ class BackupDirsMain(QtGui.QWidget):
     return dirListTab    
 
   def preferencesTab(self):
+    if not self.withGui:
+      return None
     preferencesLayout = QtGui.QGridLayout()
     preferencesLayout.addWidget(QtGui.QLabel('Target directory:'), 0, 0)
     targetDirLayout = QtGui.QHBoxLayout()
@@ -128,14 +134,19 @@ class BackupDirsMain(QtGui.QWidget):
     self.main.setDirty(True)
 
   def removeDirs(self):
+    if not self.withGui:
+      return
     selectedItems = self.dirListWidget.selectedItems() 
     for item in selectedItems:
+      self.dirs.remove(item.text())
       self.dirListWidget.removeRow(item.row())
       if self.dirListWidget.rowCount() == 0:
         self.main.start.setEnabled(False)
       self.main.setDirty(True)
 
   def selectTargetDir(self):
+    if not self.withGui:
+      return
     dialog = QtGui.QFileDialog()
     dialog.setFileMode(QtGui.QFileDialog.DirectoryOnly)
     dialog.setViewMode(QtGui.QFileDialog.Detail);
@@ -145,16 +156,26 @@ class BackupDirsMain(QtGui.QWidget):
     
   def addDirs(self):
     """ Add selected directory to the list. Set `isDirty' flag accordingly.
-        Multiple directories cannot be selected by default in PyQt4... """
+        Multiple dirs cannot be selected by default in PyQt4... """
+    if not self.withGui:
+      return False
     dialog = QtGui.QFileDialog()
     dialog.setFileMode(QtGui.QFileDialog.Directory)
     dialog.setViewMode(QtGui.QFileDialog.Detail);
     if dialog.exec_():
-      itemsBefore = self.dirListWidget.rowCount()
-      selectedDirs = filter(lambda mydir: mydir not in [self.dirListWidget.item(i, 0).text() for i in range(itemsBefore)], dialog.selectedFiles())
-      for mydir in selectedDirs:
+      selectedDirs = [str(selDir) for selDir in dialog.selectedFiles()]
+      selectedDirsWrong = [selDir for selDir in selectedDirs if len([myDir for myDir in self.dirs if self.isSubDir(selDir, myDir)]) > 0]
+      if len(selectedDirsWrong) > 0:
+        QtGui.QMessageBox.warning(self, 'Warning',
+          'The following directories were skipped. They were subdirectories\n' \
+          'of other already set up directories or parent directories of them:\n\n%s'
+          % ('\n'.join(selectedDirsWrong)),
+          QtGui.QMessageBox.Ok, QtGui.QMessageBox.Ok)
+      selectedDirs = [selDir for selDir in selectedDirs if selDir not in selectedDirsWrong]
+      for myDir in selectedDirs:
+        self.dirs.append(myDir)
         self.dirListWidget.insertRow(self.dirListWidget.rowCount())
-        self.dirListWidget.setItem(self.dirListWidget.rowCount() - 1, 0, QtGui.QTableWidgetItem(mydir))
+        self.dirListWidget.setItem(self.dirListWidget.rowCount() - 1, 0, QtGui.QTableWidgetItem(myDir))
         elapsedTime = QtGui.QTableWidgetItem('0:00')
         elapsedTime.setFlags(QtCore.Qt.NoItemFlags)
         self.dirListWidget.setItem(self.dirListWidget.rowCount() - 1, 1, elapsedTime)
@@ -179,7 +200,7 @@ class BackupDirsMain(QtGui.QWidget):
           reading_directories = False
         else:
           if reading_directories:
-            self.directories.append(line)
+            self.dirs.append(line)
           elif reading_settings:
             splitted = line.split('=')
             if len(splitted) != 2:
@@ -194,50 +215,61 @@ class BackupDirsMain(QtGui.QWidget):
       f = open(settings_file, 'w')
       if self.dirListWidget.rowCount() > 0:
         f.write('[DIRECTORIES]\n')
-        for i in range(self.dirListWidget.rowCount()):
-          f.write('%s\n' % self.dirListWidget.item(i, 0).text())
+        if self.withGui:
+          for i in range(self.dirListWidget.rowCount()):
+            f.write('%s\n' % self.dirListWidget.item(i, 0).text())
+        else:
+          for d in self.dirs:
+            f.write('%s\n' % d)
       if len(self.settings.keys()) > 0:
         f.write('[SETTINGS]\n')
         for name, value in self.settings.items():
           f.write('%s=%s\n' % (name, value))
       f.close()
       self.main.setDirty(False)
-      self.settings.keys()
     except IOError:
-      QtGui.QMessageBox.critical(self, 'Error',
-        'Unable to save settings to %s.'
-        % settings_file, QtGui.QMessageBox.Ok, QtGui.QMessageBox.Ok)
+      self.error('Unable to save settings to %s.' % settings_file)
+
+  def error(self, message):
+    if self.withGui:
+      QtGui.QMessageBox.critical(self, 'Error', message,
+                                 QtGui.QMessageBox.Ok, QtGui.QMessageBox.Ok)
+    else:
+      sys.stderr.write('Error: %s' % message)
 
   def setStatus(self, mydir, status):
+    if not self.withGui:
+      return
     for i in range(self.dirListWidget.rowCount()):
       idir = self.dirListWidget.item(i, 0).text()
       if idir == mydir:
         self.dirListWidget.item(i, 2).setText(status)
 
+  def isSubDir(self, aDir, bDir):
+    return aDir.startswith(bDir) or bDir.startswith(aDir) 
+    
   def canWeStart(self):
-    for i in range(self.dirListWidget.rowCount()):
-      mydir = self.dirListWidget.item(i, 0).text()
-      if mydir.startsWith(self.settings['targetDir']):
+    for d in self.dirs:
+      if self.isSubDir(d, self.settings['targetDir']):
         return False
     return True
 
   def startBackup(self):
     if not self.canWeStart():
-      QtGui.QMessageBox.critical(self, 'Error',
-        'The targetDir %s cannot be in the list of directories to be archived.'
-        % self.settings['targetDir'], QtGui.QMessageBox.Ok, QtGui.QMessageBox.Ok)
-      self.main.stopBackup()
+      self.error('The targetDir %s cannot be in the list of dirs to be archived.'
+                 % self.settings['targetDir'])
       return False
-    self.timer.start()
-    self.archiver = Archiver(self, self.directories, self.settings)
+    self.archiver = Archiver(self, self.dirs, self.settings)
     self.connect(self.archiver, QtCore.SIGNAL('finishBackup'), self.finishBackup)
     self.connect(self.archiver, QtCore.SIGNAL('setStatus'), self.setStatus)
     self.archiver.start()
+    if self.withGui:
+      self.timer.start()
     return True
   
   def finishBackup(self):
     QtGui.QMessageBox.information(self, 'Finished',
-      'Backup finished successfully. The statistics will be saved.', QtGui.QMessageBox.Ok, QtGui.QMessageBox.Ok)
+      'Backup finished successfully. Statistics are saved.', QtGui.QMessageBox.Ok, QtGui.QMessageBox.Ok)
     f = open(os.path.join(self.archiver.getTargetDir(), 'README'), 'w')
     for i in range(self.dirListWidget.rowCount()):
       #save them first to a file with du!!
@@ -255,13 +287,15 @@ class BackupDirsMain(QtGui.QWidget):
     self.main.finishBackup()
   
   def stopBackup(self):
+    if not self.withGui:
+      return
     self.timer.kill()
     if self.archiver:
       self.archiver.stopThread()
       self.archiver.wait() # Similar to join.
 
 class Timer(QtCore.QThread):
-  """ Simple timer thread to measure elapsed time. """
+  """ Simple timer thread to measure elapsed time and update second column. """
   def __init__(self, tableWidget):
     QtCore.QThread.__init__(self)
     self.table = tableWidget
@@ -289,7 +323,7 @@ class Timer(QtCore.QThread):
 
 class Archiver(QtCore.QThread):
   def __init__(self, main, dirs, settings):
-    """ Archive the directories one by one according to settings. The thread can only be cancelled between directories. """
+    """ Archive the dirs one by one according to settings. The thread can only be cancelled between dirs. """
     QtCore.QThread.__init__(self)
     self.threadPool = ThreadPool(self, multiprocessing.cpu_count() + 1)
     self.stopNow = False
@@ -377,4 +411,4 @@ class ThreadPool:
   def wait_completion(self):
     # All of the tasks completed.
     self.tasks.join()
-    # Destroy threads carefully with possible restart!!!!
+    # Destroy threads carefully with possible restart!

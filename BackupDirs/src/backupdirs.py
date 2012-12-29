@@ -4,25 +4,32 @@ import sys
 
 from PyQt4 import QtGui, QtCore
 
+from optparse import OptionParser
 from backupdirsmain import BackupDirsMain
 
 class BackupDirs(QtGui.QMainWindow):
-  def __init__(self):
-    QtGui.QMainWindow.__init__(self)
-    self.initUI()
-    
-  def initUI(self):
+  def __init__(self, withGui = True):
+    self.withGui = withGui
     self.isDirty = False # Settings file needs to be updated.
     self.isArchiving = False # Still running.
-    self.create_menus()
-    self.setWindowTitle('Backup')
+    self.main = BackupDirsMain(self)
+    if self.withGui:
+      QtGui.QMainWindow.__init__(self)
+      self.initGui()
+    
+  def initGui(self):
+    if not self.withGui:
+      return
+    self.createMenus()
+    self.setWindowTitle('Backup Dirs')
     self.setWindowIcon(QtGui.QIcon('icons/logo.png'))
     self.resize(640, 480)
     self.center()
-    self.main = BackupDirsMain(self)
     self.setCentralWidget(self.main)
     
-  def create_menus(self):
+  def createMenus(self):
+    if not self.withGui:
+      return
     self.start = QtGui.QAction(QtGui.QIcon('icons/start.png'), 'St&art', self)
     self.connect(self.start, QtCore.SIGNAL('triggered()'), self.startBackup)
     self.start.setShortcut('Ctrl+A')
@@ -86,11 +93,15 @@ class BackupDirs(QtGui.QMainWindow):
 
   def finishBackup(self):
     """ Emitted by the child process. """
+    if not self.withGui:
+      return
     self.start.setEnabled(True)
     self.stop.setEnabled(False)
-    self.isArchiving = False    
+    self.isArchiving = False
   
   def closeEvent(self, event):
+    if not self.withGui:
+      return
     if self.isDirty:
       reply = QtGui.QMessageBox.question(self, 'Exit', 'Abandoning changes?',
         QtGui.QMessageBox.Yes | QtGui.QMessageBox.No, QtGui.QMessageBox.No)
@@ -145,14 +156,20 @@ class BackupDirs(QtGui.QMainWindow):
       '- All files exceeding a given size will be ignored\n' \
       '- Interruptible, asynchronous backups\n' \
       '- Progress indication\n' \
-      '- File suffix filtering\n\n' \
-      'Work in progress:\n' \
-      '- Summary generation\n' \
+      '- File suffix filtering\n' \
       '- Multi-threaded archiving\n' \
+      '- Summary generation\n' \
       '- Command line mode', QtGui.QMessageBox.Ok) 
 
 if __name__ == '__main__':
-  app = QtGui.QApplication(sys.argv)
-  main = BackupDirs()
-  main.show()
-  sys.exit(app.exec_())
+  parser = OptionParser()
+  parser.add_option("-n", "--no-gui", action = "store_false", dest = "gui", default = True, help = "Disable GUI")
+  (options, args) = parser.parse_args()
+  if options.gui:
+    app = QtGui.QApplication(sys.argv)
+    main = BackupDirs()
+    main.show()
+    sys.exit(app.exec_())
+  else:
+    main = BackupDirs(False)
+    main.startBackup()
